@@ -7,6 +7,16 @@ or creates a new raster map. See the source code for more details.
 <p><EM>mask</EM> accepts only CELL</p>
 
 <H2>EXAMPLE</H2>
+This should give ~510 on a global scale
+r.mapcalc 'js_ones=1'
+r.area -a input=js_ones scale=1.e-12
+
+The sum should again give ~510 on a global scale
+r.mapcalc 'js_rand=rand(0,10)'
+for ((i=0; i<10; ++i)); do
+  r.area -aq input=js_ones mask=js_rand field=${i} scale=1.e-12
+done
+g.remove rast=js_ones,js_rand
 
 <H2>TODO</H2>
 Complete this documentation
