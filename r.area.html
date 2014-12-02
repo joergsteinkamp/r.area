@@ -16,7 +16,15 @@ r.mapcalc 'js_rand=rand(0,10)'
 for ((i=0; i<10; ++i)); do
   r.area -aq input=js_ones mask=js_rand field=${i} scale=1.e-12
 done
-g.remove rast=js_ones,js_rand
+
+If you assume js_rand is a flux of CO2/m^2/yr, 
+r.area -a input=js_rand
+gives you the total in CO2/yr and 
+r.area -a input=js_rand output=js_out
+creates a new raster map "js_out" with the unit CO2/s.
+You could filter these fluxes again with another raster layer, which you use as mask.
+
+g.remove rast=js_ones,js_rand,js_out
 
 <H2>TODO</H2>
 Complete this documentation
