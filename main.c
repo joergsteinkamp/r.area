@@ -20,6 +20,7 @@
 #include <string.h>
 #include <math.h>
 #include <grass/gis.h>
+#include <grass/raster.h>
 #include <grass/glocale.h>
 
 /* 
@@ -69,7 +70,9 @@ int main(int argc, char *argv[])
 
   /* initialize module */
   module = G_define_module();
-  module->keywords = _("raster, area, gridcell");
+  G_add_keyword(_("raster"));
+  G_add_keyword(_("area"));
+  G_add_keyword(_("gridcell"));
   module->description = _("Area calculation of raster gridcells");
 
   /* Define the different options as defined in gis.h */
@@ -154,12 +157,12 @@ int main(int argc, char *argv[])
    * mapset name otherwise */
   maskexist = 0;
   if (maskname) {
-    mapset = G_find_cell2(maskname, "");
+    mapset = (char *) G_find_raster2(maskname, "");
     if (mapset != NULL)
       maskexist = 1;
   }
 
-  mapset = G_find_cell2(inname, "");
+  mapset = (char *) G_find_raster2(inname, "");
   if (mapset == NULL)
     G_fatal_error(_("Raster map <%s> not found"), inname);
 
@@ -167,42 +170,39 @@ int main(int argc, char *argv[])
     G_fatal_error(_("<%s> is an illegal file name"), result);
 
   /* determine the inputmap type (CELL/FCELL/DCELL) */
-  in_type = G_raster_map_type(inname, mapset);
+  in_type = Rast_map_type(inname, mapset);
 
-  /* G_open_cell_old - returns file destriptor (>0) */
-  if ((infd = G_open_cell_old(inname, mapset)) < 0)
+  /* Open an existing raster map */
+  if ((infd = Rast_open_old(inname, mapset)) < 0)
     G_fatal_error(_("Unable to open raster map <%s>"), inname);
 
   /* controlling, if we can open input raster */
-  if (G_get_cellhd(inname, mapset, &cellhd) < 0)
-    G_fatal_error(_("Unable to read file header of <%s>"), inname);
-
-  if (maskexist) {
-    mask_type = G_raster_map_type(maskname, mapset);
-    if (mask_type != CELL_TYPE)
-      G_fatal_error(_("Raster map <%s> must be of type CELL"), maskname);
-    if ((maskfd = G_open_cell_old(maskname, mapset)) < 0)
-      G_fatal_error(_("Unable to open raster map <%s>"), maskname);
-    if (G_get_cellhd(maskname, mapset, &cellhd) < 0)
-      G_fatal_error(_("Unable to read file header of <%s>"), maskname);
-  }
+  Rast_get_cellhd(inname, mapset, &cellhd);
 
   G_debug(3, "number of rows %d", cellhd.rows);
 
-  /* Allocate input buffer */
-  inrast = G_allocate_raster_buf(in_type);
+  /* Open another existing raster map as mask */
+  if (maskexist) {
+    mask_type = Rast_map_type(maskname, mapset);
+    if (mask_type != CELL_TYPE)
+      G_fatal_error(_("Raster map <%s> must be of type CELL"), maskname);
+    maskfd = Rast_open_old(maskname, mapset);
+    Rast_get_cellhd(maskname, mapset, &cellhd);
+  }
 
+  /* Allocate input buffers */
+  inrast = Rast_allocate_buf(in_type);
   if (maskexist)
-    inmask = G_allocate_raster_buf(mask_type);
+    inmask = Rast_allocate_buf(mask_type);
 
   /* Allocate output buffer, use input map data_type */
-  nrows = G_window_rows();
-  ncols = G_window_cols();
-  outrast = G_allocate_raster_buf(out_type);
+  nrows = Rast_window_rows();
+  ncols = Rast_window_cols();
+  outrast = Rast_allocate_buf(out_type);
 
   /* controlling, if we can write the raster */
-  if (outputdesired && (outfd = G_open_raster_new(result, out_type)) < 0)
-    G_fatal_error(_("Unable to create raster map <%s>"), result);
+  if (outputdesired)
+    outfd = Rast_open_new(result, out_type);
 
   beg_cell_area = G_begin_cell_area_calculations();
 
@@ -231,64 +231,60 @@ int main(int argc, char *argv[])
       cellarea = G_area_of_cell_at_row(row);
 
     /* read input map */
-    if (G_get_raster_row(infd, inrast, row, in_type) < 0)
-      G_fatal_error(_("Unable to read raster map <%s> row %d"), inname,
-		    row);
+    Rast_get_row(infd, inrast, row, in_type);
     if (maskexist)
-      if (G_get_raster_row(maskfd, inmask, row, CELL_TYPE) < 0)
-	G_fatal_error(_("Unable to read raster map <%s> row %d"), maskname,
-		      row);
+      Rast_get_row(maskfd, inmask, row, CELL_TYPE);
 
     /* process the data */
     for (col = 0; col < ncols; col++) {
       /* use different function for each data type */
       if (flagf->answer) {
-	((FCELL *) outrast)[col] = def_out_val;
+        ((FCELL *) outrast)[col] = def_out_val;
       } else {
-	((DCELL *) outrast)[col] = def_out_val;
+        ((DCELL *) outrast)[col] = def_out_val;
       }
       if (maskexist) {
-	m = ((CELL *) inmask)[col];
-	if (m != atoi(field->answer))
-	  continue;
+        m = ((CELL *) inmask)[col];
+        if (m != atoi(field->answer))
+          continue;
       }
 
       switch (in_type) {
       case CELL_TYPE:
-	c = ((CELL *) inrast)[col];
-	tsum += c*cellarea;
-	if (flagf->answer) {
-	  ((FCELL *) outrast)[col] = c*cellarea;
-	} else {
-	  ((DCELL *) outrast)[col] = c*cellarea;
-	}
-	break;
+        c = ((CELL *) inrast)[col];
+        tsum += c*cellarea;
+        if (flagf->answer) {
+          ((FCELL *) outrast)[col] = c*cellarea;
+        } else {
+          ((DCELL *) outrast)[col] = c*cellarea;
+        }
+        break;
       case FCELL_TYPE:
-	f = ((FCELL *) inrast)[col];
-	if (isnan(f)) break;
-	tsum += f*cellarea;
-	if (flagf->answer) {
-	  ((FCELL *) outrast)[col] = f*cellarea;
-	} else {
-	  ((DCELL *) outrast)[col] = f*cellarea;
-	}
-	break;
+        f = ((FCELL *) inrast)[col];
+        if (isnan(f)) break;
+        tsum += f*cellarea;
+        if (flagf->answer) {
+          ((FCELL *) outrast)[col] = f*cellarea;
+        } else {
+          ((DCELL *) outrast)[col] = f*cellarea;
+        }
+        break;
       case DCELL_TYPE:
-	d = ((DCELL *) inrast)[col];
-	if (isnan(d)) break;
-	tsum += d*cellarea;
-	if (flagf->answer) {
-	  ((FCELL *) outrast)[col] = d*cellarea;
-	} else {
-	  ((DCELL *) outrast)[col] = d*cellarea;
-	}
-	break;
+        d = ((DCELL *) inrast)[col];
+        if (isnan(d)) break;
+        tsum += d*cellarea;
+        if (flagf->answer) {
+          ((FCELL *) outrast)[col] = d*cellarea;
+        } else {
+          ((DCELL *) outrast)[col] = d*cellarea;
+        }
+        break;
       }
     }
 
     /* write raster row to output raster map */
-    if (outputdesired && G_put_raster_row(outfd, outrast, out_type) < 0)
-      G_fatal_error(_("Failed writing raster map <%s>"), result);
+    if (outputdesired)
+      Rast_put_row(outfd, outrast, out_type);
   }
 
   fscale = atof(scale->answer);
@@ -296,20 +292,22 @@ int main(int argc, char *argv[])
 
   /* memory cleanup */
   G_free(inrast);
-  G_free(inmask);
+  if (maskexist)
+    G_free(inmask);
   if(outputdesired)
     G_free(outrast);
 
   /* closing raster maps */
-  G_close_cell(infd);
-  G_close_cell(maskfd);
+  Rast_close(infd);
+  if (maskexist)  
+    Rast_close(maskfd);
   if(outputdesired) {
-    G_close_cell(outfd);
+    Rast_close(outfd);
 
   /* add command line incantation to history file */
-    G_short_history(result, "raster", &history);
-    G_command_history(&history);
-    G_write_history(result, &history);
+    Rast_short_history(result, "raster", &history);
+    Rast_command_history(&history);
+    Rast_write_history(result, &history);
   }
 
   exit(EXIT_SUCCESS);
